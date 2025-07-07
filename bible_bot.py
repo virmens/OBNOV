@@ -1,10 +1,15 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
-import random
-
 import os
+import random
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler,
+    ContextTypes
+)
+from telegram.constants import ParseMode
+from aiohttp import web
 
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.environ.get("TOKEN")
+PORT = int(os.environ.get("PORT", 5000))
 
 
 BIBLE_BOOKS = [
@@ -28,41 +33,37 @@ BIBLE_BOOKS = [
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("🎡 Крутить колесо", callback_data='spin')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-    "👋 Привет! Нажми на кнопку, чтобы случайным образом выбрать книгу из Библии:",
-    reply_markup=reply_markup,
-    parse_mode='Markdown'
-)
-
+    await update.message.reply_text("👋 Привет! Нажми кнопку, чтобы выбрать книгу:", reply_markup=reply_markup)
 
 async def spin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     book = random.choice(BIBLE_BOOKS)
-    keyboard = [[InlineKeyboardButton("🎡 Крутить ещё раз", callback_data='spin')]]
+    keyboard = [[InlineKeyboardButton("🎡 Ещё раз", callback_data='spin')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text(f"📖 Тебе выпала книга: *{book}*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
-    await query.message.reply_text(
-        text=f"📖 Тебе выпала книга: *{book}*",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Вот доступные команды:\n"
-        "/start - начать работу с ботом\n"
-        "/help - получить эту помощь"
-    )
-
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+async def main():
+    app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(spin))
-    print("✅ Бот запущен. Открой Telegram и отправь /start")
-    app.run_polling()
+
+    # Веб-сервер aiohttp
+    async def handler(request):
+        data = await request.json()
+        update = Update.de_json(data, app.bot)
+        await app.process_update(update)
+        return web.Response()
+
+    aio_app = web.Application()
+    aio_app.router.add_post(f"/{TOKEN}", handler)
+
+    # Запуск Webhook
+    await app.bot.set_webhook(f"https://{os.environ['RENDER_EXTERNAL_HOSTNAME']}/{TOKEN}")
+    print("✅ Бот запущен по webhook...")
+
+    web.run_app(aio_app, host="0.0.0.0", port=PORT)
 
 if __name__ == '__main__':
-    main()
+    import asyncio
+    asyncio.run(main())
